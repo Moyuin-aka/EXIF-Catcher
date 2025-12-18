@@ -21,11 +21,11 @@
 
 ```bash
 git clone https://github.com/Moyuin-aka/EXIF-Catcher
-cd exif_catcher
+cd EXIF-Catcher
 cargo build --release
 ```
 
-编译后的二进制文件位于 `target/release/exif_catcher`
+编译后的二进制文件位于 `target/release/EXIF-Catcher`
 
 ## 使用方法
 
@@ -34,7 +34,7 @@ cargo build --release
 ```bash
 cargo run
 # 或
-./target/release/exif_catcher
+./target/release/EXIF-Catcher
 ```
 
 程序会引导你输入必要的参数：
@@ -47,13 +47,13 @@ cargo run
 
 ```bash
 # 基本使用
-exif_catcher -i /path/to/photos -o dist -q 80
+EXIF-Catcher -i /path/to/photos -o dist -q 80
 
 # 仅提取EXIF，不转换图片
-exif_catcher -i /path/to/photos --skip-webp
+EXIF-Catcher -i /path/to/photos --skip-webp
 
 # 查看帮助
-exif_catcher --help
+EXIF-Catcher --help
 ```
 
 ### 参数说明
@@ -63,6 +63,7 @@ exif_catcher --help
 | `--input` | `-i` | 输入目录（包含原始图片） | 必需 |
 | `--output` | `-o` | 输出根目录 | `dist` |
 | `--quality` | `-q` | WebP质量 (1-100) | `80` |
+| `--max-width` | - | 限制图片最大宽度（像素），0为不限制 | `0` |
 | `--skip-webp` | - | 跳过WebP转换 | `false` |
 | `--yes` | `-y` | 跳过交互确认 | `false` |
 
@@ -107,7 +108,7 @@ dist/
 
 ```bash
 # 1. 处理照片
-exif_catcher -i ~/Photos/Travel/Paris -o ~/blog/static/galleries
+EXIF-Catcher -i ~/Photos/Travel/Paris -o ~/blog/static/galleries
 
 # 2. 上传到云存储（使用Rclone）
 rclone sync ~/blog/static/galleries/Paris r2:my-bucket/galleries/Paris
@@ -118,7 +119,7 @@ rclone sync ~/blog/static/galleries/Paris r2:my-bucket/galleries/Paris
 ```bash
 #!/bin/bash
 for album in ~/Photos/Albums/*; do
-  exif_catcher -i "$album" -o dist -q 85
+  EXIF-Catcher -i "$album" -o dist -q 85
 done
 ```
 
@@ -135,6 +136,10 @@ done
   - 75-80: 高质量，适合专业摄影展示
   - 85-90: 接近无损，文件略大
   - 60-70: 较小文件，适合网页快速加载
+- **图片尺寸优化**: 
+  - 使用 `--max-width 2048` 可以大幅提升处理速度（3-5倍）
+  - 对于网页展示，2048px 宽度已经足够清晰
+  - 原始4K图片（4096px）处理较慢，建议缩放
 
 - **并行处理**: 工具自动利用所有CPU核心，无需手动配置
 
@@ -142,12 +147,14 @@ done
 
 ## 常见问题
 
-### Q: WebP压缩后文件反而变大？
-A: v0.2.0版本已修复，现在使用真正的有损压缩。如遇此问题请更新到最新版本。
-
 ### Q: 某些相机的EXIF信息缺失？
 A: 不同相机厂商使用的EXIF标签略有差异，如发现问题请提Issue。
 
+### Q: 没有Rust环境可以使用吗？
+A: 可以！直接下载预编译的二进制文件，无需安装Rust。
+
+### Q: 处理速度慢怎么办？
+A: 使用 `--max-width 2048` 参数限制图片宽度，可以提速3-5倍。
 ### Q: 如何集成到Astro/Next.js等静态网站？
 A: 生成的JSON可直接导入：
 ```javascript
@@ -185,14 +192,3 @@ MIT License
 ## 贡献
 
 欢迎提交Issue和Pull Request！
-
-## 更新日志
-
-### v0.2.0
-- 修复WebP压缩问题，实现真正的有损压缩
-- 新增并行处理支持
-- 优化输出结构
-- 改进EXIF字段提取
-
-### v0.1.0
-- 初始版本
