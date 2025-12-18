@@ -20,7 +20,7 @@
 ### 从源码构建
 
 ```bash
-git clone https://github.com/your-username/exif_catcher.git
+git clone https://github.com/Moyuin-aka/EXIF-Catcher
 cd exif_catcher
 cargo build --release
 ```
