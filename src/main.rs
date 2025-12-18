@@ -1,232 +1,386 @@
-use axum::{
-    extract::Query,
-    http::StatusCode,
-    response::{IntoResponse, Json},
-    routing::get,
-    Router,
-};
+use clap::Parser;
+use colored::*;
+use dialoguer::{Input, Confirm};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::fs;
 use std::io::Cursor;
-use tower_http::cors::CorsLayer;
-use tracing::{info, error};
+use anyhow::{Context, Result};
+use rayon::prelude::*;
+use indicatif::{ProgressBar, ProgressStyle};
 
-// ============== 数据结构定义 ==============
-
-/// API请求参数 - 接收图片URL
-#[derive(Deserialize)]
-struct ExifRequest {
-    /// 图片的URL地址（S3或其他公开URL）
-    url: String,
+// CLI定义
+#[derive(Parser)]
+#[command(author, version, about = "静态相册生成器 - EXIF提取 + WebP转换")]
+struct Cli {
+    #[arg(short, long, value_name = "DIR")]
+    input: Option<PathBuf>,
+    
+    #[arg(short, long, value_name = "DIR", default_value = "dist")]
+    output: PathBuf,
+    
+    #[arg(long)]
+    skip_webp: bool,
+    
+    #[arg(short, long, default_value = "80")]
+    quality: u8,
+    
+    /// 限制最大宽度（像素），0为不限制
+    #[arg(long, default_value = "0")]
+    max_width: u32,
+    
+    #[arg(short = 'y', long)]
+    yes: bool,
 }
 
-/// EXIF信息响应结构 - 返回给前端的数据
-#[derive(Serialize)]
-struct ExifResponse {
-    /// 是否成功
-    success: bool,
-    /// 错误信息（如果有）
+// 数据结构
+#[derive(Serialize, Deserialize, Debug)]
+struct Photo {
+    original: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-    /// EXIF数据
+    webp: Option<String>,
+    original_size: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<ExifData>,
+    webp_size: Option<u64>,
+    #[serde(flatten)]
+    exif: ExifData,
 }
 
-/// 详细的EXIF数据
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct ExifData {
-    /// 相机制造商（如：Canon, Nikon, Sony）
     #[serde(skip_serializing_if = "Option::is_none")]
     make: Option<String>,
-    /// 相机型号（如：Canon EOS R5）
     #[serde(skip_serializing_if = "Option::is_none")]
     model: Option<String>,
-    /// 镜头型号
     #[serde(skip_serializing_if = "Option::is_none")]
     lens: Option<String>,
-    /// ISO感光度
     #[serde(skip_serializing_if = "Option::is_none")]
     iso: Option<String>,
-    /// 快门速度（如：1/1000）
     #[serde(skip_serializing_if = "Option::is_none")]
     shutter_speed: Option<String>,
-    /// 光圈值（如：f/2.8）
     #[serde(skip_serializing_if = "Option::is_none")]
     aperture: Option<String>,
-    /// 焦距（如：50mm）
     #[serde(skip_serializing_if = "Option::is_none")]
     focal_length: Option<String>,
-    /// 拍摄日期时间
     #[serde(skip_serializing_if = "Option::is_none")]
     date_time: Option<String>,
-    /// 图片宽度
     #[serde(skip_serializing_if = "Option::is_none")]
-    width: Option<String>,
-    /// 图片高度
+    width: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    height: Option<String>,
+    height: Option<u32>,
 }
 
-// ============== 核心功能实现 ==============
-
-/// 从URL下载图片
-async fn download_image(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    info!("开始下载图片: {}", url);
-    
-    // 发送HTTP GET请求（类似Python的 requests.get()）
-    let response = reqwest::get(url).await?;
-    
-    // 检查HTTP状态码
-    if !response.status().is_success() {
-        return Err(format!("下载失败，状态码: {}", response.status()).into());
-    }
-    
-    // 读取响应体为字节数组（类似Python的 response.content）
-    let bytes = response.bytes().await?;
-    info!("图片下载完成，大小: {} 字节", bytes.len());
-    
-    Ok(bytes.to_vec())
-}
-
-/// 解析图片的EXIF数据
-fn parse_exif(image_data: &[u8]) -> Result<ExifData, Box<dyn std::error::Error>> {
-    info!("开始解析EXIF数据");
-    
-    // 创建一个内存读取器（类似Python的 io.BytesIO）
-    let cursor = Cursor::new(image_data);
-    
-    // 解析EXIF
+// 提取EXIF
+fn extract_exif(path: &Path) -> Result<ExifData> {
+    let file_data = fs::read(path)?;
+    let cursor = Cursor::new(file_data);
     let exif_reader = exif::Reader::new();
-    let exif = exif_reader.read_from_container(&mut cursor.clone())?;
+    let exif = exif_reader.read_from_container(&mut cursor.clone())
+        .context("无法读取EXIF")?;
     
-    // 辅助函数：安全获取EXIF字段
     let get_field = |tag: exif::Tag| -> Option<String> {
-        exif.get_field(tag, exif::In::PRIMARY)
+        if let Some(field) = exif.get_field(tag, exif::In::PRIMARY) {
+            return Some(field.display_value().to_string());
+        }
+        exif.fields()
+            .find(|f| f.tag == tag)
             .map(|field| field.display_value().to_string())
     };
     
-    // 提取各项EXIF信息
-    let make = get_field(exif::Tag::Make);
-    let model = get_field(exif::Tag::Model);
-    let lens = get_field(exif::Tag::LensModel);
-    let iso = get_field(exif::Tag::PhotographicSensitivity);
-    let shutter_speed = get_field(exif::Tag::ExposureTime);
-    let aperture = get_field(exif::Tag::FNumber);
-    let focal_length = get_field(exif::Tag::FocalLength);
-    let date_time = get_field(exif::Tag::DateTime);
-    let width = get_field(exif::Tag::PixelXDimension);
-    let height = get_field(exif::Tag::PixelYDimension);
-    
-    info!("EXIF解析成功");
-    
     Ok(ExifData {
-        make,
-        model,
-        lens,
-        iso,
-        shutter_speed,
-        aperture,
-        focal_length,
-        date_time,
-        width,
-        height,
+        make: get_field(exif::Tag::Make).map(|s| s.trim_matches('"').to_string()),
+        model: get_field(exif::Tag::Model).map(|s| s.trim_matches('"').to_string()),
+        lens: get_field(exif::Tag::LensModel).map(|s| s.trim_matches('"').to_string()),
+        iso: get_field(exif::Tag::PhotographicSensitivity)
+            .or_else(|| get_field(exif::Tag::ISOSpeed)),
+        shutter_speed: get_field(exif::Tag::ExposureTime)
+            .or_else(|| get_field(exif::Tag::ShutterSpeedValue)),
+        aperture: get_field(exif::Tag::FNumber)
+            .or_else(|| get_field(exif::Tag::ApertureValue)),
+        focal_length: get_field(exif::Tag::FocalLength),
+        date_time: get_field(exif::Tag::DateTime),
+        width: get_field(exif::Tag::PixelXDimension)
+            .or_else(|| get_field(exif::Tag::ImageWidth))
+            .and_then(|s| s.parse().ok()),
+        height: get_field(exif::Tag::PixelYDimension)
+            .or_else(|| get_field(exif::Tag::ImageLength))
+            .and_then(|s| s.parse().ok()),
     })
 }
 
-// ============== API路由处理 ==============
-
-/// 健康检查端点
-async fn health_check() -> impl IntoResponse {
-    Json(serde_json::json!({
-        "status": "ok",
-        "service": "exif_catcher",
-        "version": "0.1.0"
-    }))
-}
-
-/// 主要的EXIF提取端点
-/// 
-/// 使用方式：GET /exif?url=https://your-s3-bucket.com/image.jpg
-async fn get_exif(Query(params): Query<ExifRequest>) -> impl IntoResponse {
-    info!("收到EXIF请求: {}", params.url);
+// 转换WebP（有损压缩）
+fn convert_to_webp(input_path: &Path, output_path: &Path, quality: u8, max_width: u32) -> Result<u64> {
+    use image::DynamicImage;
     
-    // 下载图片
-    let image_data = match download_image(&params.url).await {
-        Ok(data) => data,
-        Err(e) => {
-            error!("图片下载失败: {}", e);
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(ExifResponse {
-                    success: false,
-                    error: Some(format!("无法下载图片: {}", e)),
-                    data: None,
-                }),
-            );
-        }
+    // 读取图片
+    let mut img = image::open(input_path)?;
+    let output_with_ext = output_path.with_extension("webp");
+    
+    // 如果设置了最大宽度，调整图片大小
+    if max_width > 0 && img.width() > max_width {
+        let ratio = max_width as f32 / img.width() as f32;
+        let new_height = (img.height() as f32 * ratio) as u32;
+        img = img.resize(max_width, new_height, image::imageops::FilterType::Lanczos3);
+    }
+    
+    // 转换为RGB8格式（WebP需要）
+    let rgb_img = match img {
+        DynamicImage::ImageRgb8(rgb) => rgb,
+        _ => img.to_rgb8(),
     };
     
-    // 解析EXIF
-    let exif_data = match parse_exif(&image_data) {
-        Ok(data) => data,
-        Err(e) => {
-            error!("EXIF解析失败: {}", e);
-            return (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                Json(ExifResponse {
-                    success: false,
-                    error: Some(format!("无法解析EXIF数据: {}", e)),
-                    data: None,
-                }),
-            );
-        }
-    };
+    // 使用webp库进行有损编码
+    let encoder = webp::Encoder::from_rgb(
+        rgb_img.as_raw(),
+        rgb_img.width(),
+        rgb_img.height(),
+    );
     
-    info!("EXIF数据提取成功");
+    // 设置质量（0-100）
+    let webp_data = encoder.encode(quality as f32);
     
-    (
-        StatusCode::OK,
-        Json(ExifResponse {
-            success: true,
-            error: None,
-            data: Some(exif_data),
-        }),
-    )
+    // 保存文件
+    fs::write(&output_with_ext, &*webp_data)?;
+    
+    Ok(fs::metadata(&output_with_ext)?.len())
 }
 
-// ============== 主程序入口 ==============
+// 处理单张图片
+fn process_image(
+    path: &Path,
+    output_img_dir: &Path,
+    skip_webp: bool,
+    quality: u8,
+    max_width: u32,
+) -> Result<Photo> {
+    let filename = path.file_name().unwrap().to_string_lossy().to_string();
+    let original_size = fs::metadata(path)?.len();
+    let exif = extract_exif(path)?;
+    
+    let (webp_filename, webp_size) = if !skip_webp {
+        let stem = path.file_stem().unwrap().to_str().unwrap();
+        let webp_name = format!("{}.webp", stem);
+        let webp_path = output_img_dir.join(&webp_name);
+        let size = convert_to_webp(path, &webp_path, quality, max_width)?;
+        (Some(webp_name), Some(size))
+    } else {
+        (None, None)
+    };
+    
+    Ok(Photo {
+        original: filename,
+        webp: webp_filename,
+        original_size,
+        webp_size,
+        exif,
+    })
+}
 
-#[tokio::main]
-async fn main() {
-    // 初始化日志系统
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
+// 扫描图片
+fn scan_images(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut images = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(ext) = path.extension() {
+                let ext_str = ext.to_string_lossy().to_lowercase();
+                if matches!(ext_str.as_str(), "jpg" | "jpeg" | "png" | "heic" | "webp") {
+                    images.push(path);
+                }
+            }
+        }
+    }
+    images.sort();
+    Ok(images)
+}
+
+// 批量处理
+fn process_directory(
+    input_dir: &Path,
+    output_root: &Path,
+    skip_webp: bool,
+    quality: u8,
+    max_width: u32,
+) -> Result<()> {
+    println!("\n{}", "🔍 扫描图片...".cyan().bold());
     
-    info!("🚀 启动 EXIF Catcher 服务");
+    let image_files = scan_images(input_dir)?;
+    if image_files.is_empty() {
+        println!("{}", "⚠️  没有找到图片！".yellow());
+        return Ok(());
+    }
     
-    // 构建应用路由（类似Python Flask的 @app.route）
-    let app = Router::new()
-        .route("/", get(health_check))           // 健康检查
-        .route("/health", get(health_check))     // 健康检查
-        .route("/exif", get(get_exif))           // EXIF提取API
-        .layer(CorsLayer::permissive());         // 启用CORS，允许跨域请求
+    println!("📂 找到 {} 张图片\n", image_files.len());
     
-    // 绑定端口
-    let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
-    let addr = format!("0.0.0.0:{}", port);
+    let folder_name = input_dir.file_name().unwrap().to_str().unwrap();
+    let output_dir = output_root.join(folder_name);
+    let output_img_dir = output_dir.join("img");
+    let output_json = output_dir.join("exif.json");
     
-    info!("📡 服务运行在: http://{}", addr);
-    info!("📖 API文档:");
-    info!("   - GET /health         - 健康检查");
-    info!("   - GET /exif?url=...   - 获取EXIF数据");
+    fs::create_dir_all(&output_img_dir)?;
     
-    // 启动服务器
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .expect("无法绑定端口");
+    println!("📁 输出结构:");
+    println!("  {}", output_dir.display().to_string().cyan());
+    println!("  ├── img/");
+    println!("  └── exif.json\n");
     
-    axum::serve(listener, app)
-        .await
-        .expect("服务器启动失败");
+    let pb = ProgressBar::new(image_files.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+            .unwrap()
+            .progress_chars("█▓▒░ "),
+    );
+    
+    if !skip_webp {
+        if max_width > 0 {
+            println!("⚡ 性能优化: 图片将缩放至最大宽度 {}px\n", max_width);
+        } else {
+            println!("💡 提示: 使用 --max-width 2048 可以加快处理速度\n");
+        }
+    }
+    
+    let results: Vec<Result<Photo>> = image_files
+        .par_iter()
+        .map(|path| {
+            let filename = path.file_name().unwrap().to_string_lossy();
+            pb.set_message(format!("处理: {}", filename));
+            let result = process_image(path, &output_img_dir, skip_webp, quality, max_width);
+            pb.inc(1);
+            result
+        })
+        .collect();
+    
+    pb.finish_with_message("完成!");
+    
+    let mut photos = Vec::new();
+    let mut errors = Vec::new();
+    
+    for (i, result) in results.into_iter().enumerate() {
+        match result {
+            Ok(photo) => photos.push(photo),
+            Err(e) => errors.push((image_files[i].clone(), e)),
+        }
+    }
+    
+    println!("\n{}", "📊 处理结果:".bold());
+    println!("  ✅ 成功: {}", photos.len().to_string().green().bold());
+    if !errors.is_empty() {
+        println!("  ❌ 失败: {}", errors.len().to_string().red().bold());
+    }
+    
+    if !skip_webp && !photos.is_empty() {
+        let total_orig: u64 = photos.iter().map(|p| p.original_size).sum();
+        let total_webp: u64 = photos.iter().filter_map(|p| p.webp_size).sum();
+        let ratio = (total_webp as f64 / total_orig as f64) * 100.0;
+        
+        println!("\n{}", "💾 压缩统计:".bold());
+        println!("  原始: {:.2} MB", total_orig as f64 / 1_048_576.0);
+        println!("  WebP: {:.2} MB", total_webp as f64 / 1_048_576.0);
+        println!("  压缩率: {:.1}%", ratio);
+    }
+    
+    if !photos.is_empty() {
+        let json = serde_json::to_string_pretty(&photos)?;
+        fs::write(&output_json, json)?;
+        
+        println!("\n{}", "✨ 完成!".green().bold());
+        println!("📝 EXIF: {}", output_json.display().to_string().cyan());
+        if !skip_webp {
+            println!("🖼️  图片: {}", output_img_dir.display().to_string().cyan());
+        }
+        println!("\n{}", "💡 提示: 现在可以用 Rclone 上传 dist/ 文件夹了!".bright_black());
+    }
+    
+    Ok(())
+}
+
+// 交互模式
+fn interactive_mode() -> Result<(PathBuf, PathBuf, bool, u8, u32)> {
+    println!("{}", "
+======================================
+  📸 EXIF Catcher
+  静态相册生成器
+======================================
+".cyan().bold());
+    
+    let input: String = Input::new()
+        .with_prompt("📂 图片目录")
+        .default("./photos".to_string())
+        .interact_text()?;
+    let input_path = PathBuf::from(&input);
+    if !input_path.exists() {
+        anyhow::bail!("目录不存在");
+    }
+    
+    let output: String = Input::new()
+        .with_prompt("💾 输出目录")
+        .default("./dist".to_string())
+        .interact_text()?;
+    let output_path = PathBuf::from(&output);
+    
+    let skip_webp = !Confirm::new()
+        .with_prompt("🎨 转换为WebP?")
+        .default(true)
+        .interact()?;
+    
+    let (quality, max_width) = if !skip_webp {
+        let q: String = Input::new()
+            .with_prompt("🎚️  质量 (1-100)")
+            .default("80".to_string())
+            .interact_text()?;
+        
+        let resize = Confirm::new()
+            .with_prompt("⚡ 限制图片宽度以加快处理?")
+            .default(false)
+            .interact()?;
+        
+        let max_w = if resize {
+            let w: String = Input::new()
+                .with_prompt("📏 最大宽度 (像素)")
+                .default("2048".to_string())
+                .interact_text()?;
+            w.parse().unwrap_or(2048)
+        } else {
+            0
+        };
+        
+        (q.parse().unwrap_or(80), max_w)
+    } else {
+        (80, 0)
+    };
+    
+    let folder_name = input_path.file_name().unwrap().to_str().unwrap();
+    println!("\n{}", "📋 配置:".bold());
+    println!("  输入: {}", input_path.display().to_string().green());
+    println!("  输出: {}/{}", output_path.display().to_string().green(), folder_name);
+    if !skip_webp {
+        println!("  WebP: 是 (质量: {})", quality);
+    }
+    
+    if !Confirm::new().with_prompt("\n开始?").default(true).interact()? {
+        anyhow::bail!("取消");
+    }
+    
+    Ok((input_path, output_path, skip_webp, quality, max_width))
+}
+
+// 主程序
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    
+    let (input_dir, output_root, skip_webp, quality, max_width) = if let Some(input) = cli.input {
+        if !input.exists() {
+            anyhow::bail!("目录不存在");
+        }
+        (input, cli.output, cli.skip_webp, cli.quality, cli.max_width)
+    } else if cli.yes {
+        anyhow::bail!("请指定输入目录");
+    } else {
+        interactive_mode()?
+    };
+    
+    process_directory(&input_dir, &output_root, skip_webp, quality, max_width)?;
+    Ok(())
 }

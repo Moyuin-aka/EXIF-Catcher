@@ -1,29 +1,34 @@
 [package]
 name = "exif_catcher"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-# Web框架 - 类似Python的Flask/FastAPI
-axum = "0.7"
-tokio = { version = "1", features = ["full"] }
-tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+# CLI参数解析和交互
+clap = { version = "4.5", features = ["derive"] }
+dialoguer = "0.11"
 
-# HTTP客户端 - 用于下载S3图片，类似Python的requests
-reqwest = { version = "0.11", features = ["json"] }
+# 并行处理
+rayon = "1.10"
 
-# EXIF解析库
+# EXIF解析
 kamadak-exif = "0.5"
 
-# JSON序列化 - 类似Python的json模块
+# 图片处理
+image = "0.25"
+
+# WebP编码（有损压缩支持）
+webp = "0.3"
+
+# JSON序列化
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# 日志 - 类似Python的logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
 # 错误处理
 anyhow = "1.0"
-thiserror = "1.0"
+
+# 彩色输出
+colored = "2.1"
+
+# 进度条
+indicatif = { version = "0.17", features = ["rayon"] }
