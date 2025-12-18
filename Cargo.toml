@@ -1,6 +1,6 @@
 [package]
 name = "exif-catcher"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 
 [dependencies]
@@ -26,6 +26,9 @@ serde_json = "1.0"
 
 # 错误处理
 anyhow = "1.0"
+
+# 目录递归遍历
+walkdir = "2.4"
 
 # 彩色输出
 colored = "2.1"

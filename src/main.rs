@@ -8,6 +8,22 @@ use std::io::Cursor;
 use anyhow::{Context, Result};
 use rayon::prelude::*;
 use indicatif::{ProgressBar, ProgressStyle};
+use walkdir::WalkDir;
+
+// Windows 平台的暂停功能（双击 exe 时不会闪退）
+#[cfg(windows)]
+fn pause_on_windows() {
+    use std::io::{self, Write};
+    println!("\n{}", "▶️  按任意键退出...".bright_black());
+    let _ = io::stdout().flush();
+    let mut input = String::new();
+    let _ = io::stdin().read_line(&mut input);
+}
+
+#[cfg(not(windows))]
+fn pause_on_windows() {
+    // 非 Windows 平台不需要暂停
+}
 
 // CLI定义
 #[derive(Parser)]
@@ -28,6 +44,10 @@ struct Cli {
     /// 限制最大宽度（像素），0为不限制
     #[arg(long, default_value = "0")]
     max_width: u32,
+    
+    /// 递归处理子目录
+    #[arg(short, long)]
+    recursive: bool,
     
     #[arg(short = 'y', long)]
     yes: bool,
@@ -177,21 +197,49 @@ fn process_image(
 }
 
 // 扫描图片
-fn scan_images(dir: &Path) -> Result<Vec<PathBuf>> {
+// 扫描图片（返回 (file_path, relative_dir)）
+fn scan_images(dir: &Path, recursive: bool) -> Result<Vec<(PathBuf, String)>> {
     let mut images = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() {
-            if let Some(ext) = path.extension() {
-                let ext_str = ext.to_string_lossy().to_lowercase();
-                if matches!(ext_str.as_str(), "jpg" | "jpeg" | "png" | "heic" | "webp") {
-                    images.push(path);
+    
+    if recursive {
+        // 递归扫描所有子目录
+        for entry in WalkDir::new(dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    let ext_str = ext.to_string_lossy().to_lowercase();
+                    if matches!(ext_str.as_str(), "jpg" | "jpeg" | "png" | "heic" | "webp") {
+                        // 计算相对于输入目录的相对路径
+                        let parent = path.parent().unwrap();
+                        let rel_dir = parent.strip_prefix(dir)
+                            .unwrap_or(Path::new(""))
+                            .to_string_lossy()
+                            .to_string();
+                        images.push((path.to_path_buf(), rel_dir));
+                    }
+                }
+            }
+        }
+    } else {
+        // 只扫描当前目录
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    let ext_str = ext.to_string_lossy().to_lowercase();
+                    if matches!(ext_str.as_str(), "jpg" | "jpeg" | "png" | "heic" | "webp") {
+                        images.push((path, String::new()));
+                    }
                 }
             }
         }
     }
-    images.sort();
+    images.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(images)
 }
 
@@ -202,10 +250,14 @@ fn process_directory(
     skip_webp: bool,
     quality: u8,
     max_width: u32,
+    recursive: bool,
 ) -> Result<()> {
     println!("\n{}", "🔍 扫描图片...".cyan().bold());
+    if recursive {
+        println!("📂 递归模式: 将扫描所有子目录\n");
+    }
     
-    let image_files = scan_images(input_dir)?;
+    let image_files = scan_images(input_dir, recursive)?;
     if image_files.is_empty() {
         println!("{}", "⚠️  没有找到图片！".yellow());
         return Ok(());
@@ -213,17 +265,35 @@ fn process_directory(
     
     println!("📂 找到 {} 张图片\n", image_files.len());
     
+    // 按相对目录分组
+    let mut groups: std::collections::HashMap<String, Vec<PathBuf>> = std::collections::HashMap::new();
+    for (path, rel_dir) in &image_files {
+        groups.entry(rel_dir.clone()).or_insert_with(Vec::new).push(path.clone());
+    }
+    
     let folder_name = input_dir.file_name().unwrap().to_str().unwrap();
-    let output_dir = output_root.join(folder_name);
-    let output_img_dir = output_dir.join("img");
-    let output_json = output_dir.join("exif.json");
     
-    fs::create_dir_all(&output_img_dir)?;
-    
-    println!("📁 输出结构:");
-    println!("  {}", output_dir.display().to_string().cyan());
-    println!("  ├── img/");
-    println!("  └── exif.json\n");
+    if recursive && groups.len() > 1 {
+        println!("📁 目录结构:");
+        println!("  {}/ (输出根目录)", output_root.display());
+        for rel_dir in groups.keys() {
+            let display_dir = if rel_dir.is_empty() {
+                folder_name.to_string()
+            } else {
+                format!("{}/{}", folder_name, rel_dir)
+            };
+            println!("    ├── {}/", display_dir);
+            println!("    │   ├── img/");
+            println!("    │   └── exif.json");
+        }
+        println!();
+    } else {
+        let output_dir = output_root.join(folder_name);
+        println!("📁 输出结构:");
+        println!("  {}", output_dir.display().to_string().cyan());
+        println!("  ├── img/");
+        println!("  └── exif.json\n");
+    }
     
     let pb = ProgressBar::new(image_files.len() as u64);
     pb.set_style(
@@ -241,38 +311,63 @@ fn process_directory(
         }
     }
     
-    let results: Vec<Result<Photo>> = image_files
-        .par_iter()
-        .map(|path| {
-            let filename = path.file_name().unwrap().to_string_lossy();
-            pb.set_message(format!("处理: {}", filename));
-            let result = process_image(path, &output_img_dir, skip_webp, quality, max_width);
-            pb.inc(1);
-            result
-        })
-        .collect();
+    // 按目录分组处理
+    let mut all_photos_by_dir: std::collections::HashMap<String, Vec<Photo>> = std::collections::HashMap::new();
+    let mut total_errors = Vec::new();
+    
+    for (rel_dir, files) in groups {
+        let output_dir = if rel_dir.is_empty() {
+            output_root.join(folder_name)
+        } else {
+            output_root.join(folder_name).join(&rel_dir)
+        };
+        let output_img_dir = output_dir.join("img");
+        fs::create_dir_all(&output_img_dir)?;
+        
+        let results: Vec<Result<Photo>> = files
+            .par_iter()
+            .map(|path| {
+                let filename = path.file_name().unwrap().to_string_lossy();
+                pb.set_message(format!("处理: {}", filename));
+                let result = process_image(path, &output_img_dir, skip_webp, quality, max_width);
+                pb.inc(1);
+                result
+            })
+            .collect();
+        
+        let mut photos = Vec::new();
+        for (i, result) in results.into_iter().enumerate() {
+            match result {
+                Ok(photo) => photos.push(photo),
+                Err(e) => total_errors.push((files[i].clone(), e)),
+            }
+        }
+        
+        all_photos_by_dir.insert(rel_dir.clone(), photos);
+    }
     
     pb.finish_with_message("完成!");
+    pb.finish_with_message("完成!");
     
-    let mut photos = Vec::new();
-    let mut errors = Vec::new();
-    
-    for (i, result) in results.into_iter().enumerate() {
-        match result {
-            Ok(photo) => photos.push(photo),
-            Err(e) => errors.push((image_files[i].clone(), e)),
-        }
-    }
+    // 统计总结果
+    let total_success: usize = all_photos_by_dir.values().map(|v| v.len()).sum();
     
     println!("\n{}", "📊 处理结果:".bold());
-    println!("  ✅ 成功: {}", photos.len().to_string().green().bold());
-    if !errors.is_empty() {
-        println!("  ❌ 失败: {}", errors.len().to_string().red().bold());
+    println!("  ✅ 成功: {}", total_success.to_string().green().bold());
+    if !total_errors.is_empty() {
+        println!("  ❌ 失败: {}", total_errors.len().to_string().red().bold());
     }
     
-    if !skip_webp && !photos.is_empty() {
-        let total_orig: u64 = photos.iter().map(|p| p.original_size).sum();
-        let total_webp: u64 = photos.iter().filter_map(|p| p.webp_size).sum();
+    // 计算压缩统计
+    if !skip_webp && total_success > 0 {
+        let total_orig: u64 = all_photos_by_dir.values()
+            .flat_map(|v| v.iter())
+            .map(|p| p.original_size)
+            .sum();
+        let total_webp: u64 = all_photos_by_dir.values()
+            .flat_map(|v| v.iter())
+            .filter_map(|p| p.webp_size)
+            .sum();
         let ratio = (total_webp as f64 / total_orig as f64) * 100.0;
         
         println!("\n{}", "💾 压缩统计:".bold());
@@ -281,14 +376,29 @@ fn process_directory(
         println!("  压缩率: {:.1}%", ratio);
     }
     
-    if !photos.is_empty() {
-        let json = serde_json::to_string_pretty(&photos)?;
-        fs::write(&output_json, json)?;
-        
+    // 保存 JSON 文件
+    if total_success > 0 {
         println!("\n{}", "✨ 完成!".green().bold());
-        println!("📝 EXIF: {}", output_json.display().to_string().cyan());
-        if !skip_webp {
-            println!("🖼️  图片: {}", output_img_dir.display().to_string().cyan());
+        for (rel_dir, photos) in all_photos_by_dir {
+            if photos.is_empty() {
+                continue;
+            }
+            
+            let output_dir = if rel_dir.is_empty() {
+                output_root.join(folder_name)
+            } else {
+                output_root.join(folder_name).join(&rel_dir)
+            };
+            let output_json = output_dir.join("exif.json");
+            let output_img_dir = output_dir.join("img");
+            
+            let json = serde_json::to_string_pretty(&photos)?;
+            fs::write(&output_json, json)?;
+            
+            println!("📝 EXIF: {}", output_json.display().to_string().cyan());
+            if !skip_webp {
+                println!("🖼️  图片: {}", output_img_dir.display().to_string().cyan());
+            }
         }
         println!("\n{}", "💡 提示: 现在可以用 Rclone 上传 dist/ 文件夹了!".bright_black());
     }
@@ -297,7 +407,7 @@ fn process_directory(
 }
 
 // 交互模式
-fn interactive_mode() -> Result<(PathBuf, PathBuf, bool, u8, u32)> {
+fn interactive_mode() -> Result<(PathBuf, PathBuf, bool, u8, u32, bool)> {
     println!("{}", "
 ======================================
   📸 EXIF Catcher
@@ -319,6 +429,11 @@ fn interactive_mode() -> Result<(PathBuf, PathBuf, bool, u8, u32)> {
         .default("./dist".to_string())
         .interact_text()?;
     let output_path = PathBuf::from(&output);
+    
+    let recursive = Confirm::new()
+        .with_prompt("📂 递归处理子目录?")
+        .default(false)
+        .interact()?;
     
     let skip_webp = !Confirm::new()
         .with_prompt("🎨 转换为WebP?")
@@ -355,6 +470,7 @@ fn interactive_mode() -> Result<(PathBuf, PathBuf, bool, u8, u32)> {
     println!("\n{}", "📋 配置:".bold());
     println!("  输入: {}", input_path.display().to_string().green());
     println!("  输出: {}/{}", output_path.display().to_string().green(), folder_name);
+    println!("  递归: {}", if recursive { "是".green() } else { "否".bright_black() });
     if !skip_webp {
         println!("  WebP: 是 (质量: {})", quality);
     }
@@ -363,24 +479,46 @@ fn interactive_mode() -> Result<(PathBuf, PathBuf, bool, u8, u32)> {
         anyhow::bail!("取消");
     }
     
-    Ok((input_path, output_path, skip_webp, quality, max_width))
+    Ok((input_path, output_path, skip_webp, quality, max_width, recursive))
 }
 
 // 主程序
-fn main() -> Result<()> {
+fn main() {
+    let result = run();
+    
+    // Windows 平台：如果出错或正常结束，都暂停一下让用户看到结果
+    #[cfg(windows)]
+    {
+        if let Err(e) = &result {
+            eprintln!("\n{} {}", "❌ 错误:".red().bold(), e);
+        }
+        pause_on_windows();
+    }
+    
+    // 非 Windows 平台：直接退出
+    #[cfg(not(windows))]
+    {
+        if let Err(e) = result {
+            eprintln!("\n{} {}", "❌ 错误:".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
     
-    let (input_dir, output_root, skip_webp, quality, max_width) = if let Some(input) = cli.input {
+    let (input_dir, output_root, skip_webp, quality, max_width, recursive) = if let Some(input) = cli.input {
         if !input.exists() {
             anyhow::bail!("目录不存在");
         }
-        (input, cli.output, cli.skip_webp, cli.quality, cli.max_width)
+        (input, cli.output, cli.skip_webp, cli.quality, cli.max_width, cli.recursive)
     } else if cli.yes {
         anyhow::bail!("请指定输入目录");
     } else {
         interactive_mode()?
     };
     
-    process_directory(&input_dir, &output_root, skip_webp, quality, max_width)?;
+    process_directory(&input_dir, &output_root, skip_webp, quality, max_width, recursive)?;
     Ok(())
 }

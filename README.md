@@ -23,17 +23,14 @@
 - **Linux**: `exif-catcher-linux-x86_64`
 - **Windows**: `exif-catcher-windows-x86_64.exe`
 
-解压后即可使用，无需安装 Rust 环境。
+下载后即可使用，无需安装 Rust 环境。
 
 ```bash
 # macOS / Linux
-tar -xzf exif-catcher-*.tar.gz
-chmod +x exif-catcher
-./exif-catcher --help
-
-# 可选：移动到系统路径
-sudo mv exif-catcher /usr/local/bin/
+./exif-catcher-* --help
 ```
+
+**Windows 用户**：直接双击 `exif-catcher.exe` 即可启动交互式界面，程序会在结束时等待按键，不会闪退。
 
 ### 方式二：使用 Cargo 安装
 
@@ -55,10 +52,10 @@ cargo build --release
 
 ## 使用方法
 
-### 交互式模式（推荐新手）
+### 交互式模式
 
 ```bash
-exif-catcher
+./exif-catcher
 ```
 
 程序会引导你输入必要的参数：
@@ -73,6 +70,9 @@ exif-catcher
 # 基本使用
 exif-catcher -i /path/to/photos -o dist -q 80
 
+# 递归处理所有子目录（保留目录结构）
+exif-catcher -i /path/to/photos -r
+
 # 仅提取EXIF，不转换图片
 exif-catcher -i /path/to/photos --skip-webp
 
@@ -86,12 +86,15 @@ exif-catcher --help
 |------|------|------|--------|
 | `--input` | `-i` | 输入目录（包含原始图片） | 必需 |
 | `--output` | `-o` | 输出根目录 | `dist` |
+| `--recursive` | `-r` | 递归处理所有子目录，保留目录结构 | `false` |
 | `--quality` | `-q` | WebP质量 (1-100) | `80` |
 | `--max-width` | - | 限制图片最大宽度（像素），0为不限制 | `0` |
 | `--skip-webp` | - | 跳过WebP转换 | `false` |
 | `--yes` | `-y` | 跳过交互确认 | `false` |
 
 ## 输出结构
+
+### 单目录模式
 
 ```
 dist/
@@ -100,6 +103,26 @@ dist/
     │   ├── photo1.webp
     │   ├── photo2.webp
     │   └── ...
+    └── exif.json
+```
+
+### 递归模式（--recursive）
+
+保留原始目录结构，每个子目录生成独立的相册：
+
+```
+dist/
+├── 相册名称/
+│   ├── img/
+│   │   └── photo1.webp
+│   └── exif.json
+├── 相册名称/子目录1/
+│   ├── img/
+│   │   └── photo2.webp
+│   └── exif.json
+└── 相册名称/子目录2/
+    ├── img/
+    │   └── photo3.webp
     └── exif.json
 ```
 
