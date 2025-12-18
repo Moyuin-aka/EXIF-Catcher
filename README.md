@@ -1,6 +1,8 @@
 # EXIF Catcher
 
-静态相册生成工具 - 批量提取照片EXIF信息并转换为WebP格式
+📸 静态相册生成工具 - 批量提取照片EXIF信息并转换为WebP格式
+
+专为摄影博客设计的照片处理工具，可以快速处理大量照片，生成结构化的元数据文件，完美集成到静态网站生成器（Astro、Hugo、Next.js等）。
 
 ## 功能特性
 
@@ -13,11 +15,35 @@
 
 ## 安装
 
-### 前置要求
+### 方式一：下载预编译版本（推荐）
 
-- Rust 1.75 或更高版本
+从 [Releases](https://github.com/Moyuin-aka/EXIF-Catcher/releases) 页面下载对应平台的二进制文件：
 
-### 从源码构建
+- **macOS**: `exif-catcher-macos-aarch64` (Apple Silicon) 或 `exif-catcher-macos-x86_64` (Intel)
+- **Linux**: `exif-catcher-linux-x86_64`
+- **Windows**: `exif-catcher-windows-x86_64.exe`
+
+解压后即可使用，无需安装 Rust 环境。
+
+```bash
+# macOS / Linux
+tar -xzf exif-catcher-*.tar.gz
+chmod +x exif-catcher
+./exif-catcher --help
+
+# 可选：移动到系统路径
+sudo mv exif-catcher /usr/local/bin/
+```
+
+### 方式二：使用 Cargo 安装
+
+如果已安装 Rust 环境（需要 1.75+）：
+
+```bash
+cargo install --git https://github.com/Moyuin-aka/EXIF-Catcher
+```
+
+### 方式三：从源码构建
 
 ```bash
 git clone https://github.com/Moyuin-aka/EXIF-Catcher
@@ -25,16 +51,14 @@ cd EXIF-Catcher
 cargo build --release
 ```
 
-编译后的二进制文件位于 `target/release/EXIF-Catcher`
+编译后的二进制文件位于 `target/release/exif-catcher`
 
 ## 使用方法
 
-### 交互式模式
+### 交互式模式（推荐新手）
 
 ```bash
-cargo run
-# 或
-./target/release/EXIF-Catcher
+exif-catcher
 ```
 
 程序会引导你输入必要的参数：
@@ -47,13 +71,13 @@ cargo run
 
 ```bash
 # 基本使用
-EXIF-Catcher -i /path/to/photos -o dist -q 80
+exif-catcher -i /path/to/photos -o dist -q 80
 
 # 仅提取EXIF，不转换图片
-EXIF-Catcher -i /path/to/photos --skip-webp
+exif-catcher -i /path/to/photos --skip-webp
 
 # 查看帮助
-EXIF-Catcher --help
+exif-catcher --help
 ```
 
 ### 参数说明
@@ -108,7 +132,7 @@ dist/
 
 ```bash
 # 1. 处理照片
-EXIF-Catcher -i ~/Photos/Travel/Paris -o ~/blog/static/galleries
+exif-catcher -i ~/Photos/Travel/Paris -o ~/blog/static/galleries
 
 # 2. 上传到云存储（使用Rclone）
 rclone sync ~/blog/static/galleries/Paris r2:my-bucket/galleries/Paris
@@ -119,16 +143,16 @@ rclone sync ~/blog/static/galleries/Paris r2:my-bucket/galleries/Paris
 ```bash
 #!/bin/bash
 for album in ~/Photos/Albums/*; do
-  EXIF-Catcher -i "$album" -o dist -q 85
+  exif-catcher -i "$album" -o dist -q 85
 done
 ```
 
 ## 支持的图片格式
 
-- JPEG (.jpg, .jpeg)
-- PNG (.png)
-- HEIC (.heic)
-- WebP (.webp)
+- ✅ JPEG (.jpg, .jpeg)
+- ✅ PNG (.png)  
+- ✅ HEIC (.heic)
+- ✅ WebP (.webp)
 
 ## 性能优化建议
 
@@ -148,10 +172,10 @@ done
 ## 常见问题
 
 ### Q: 某些相机的EXIF信息缺失？
-A: 不同相机厂商使用的EXIF标签略有差异，如发现问题请提Issue。
+A: 不同相机厂商使用的EXIF标签略有差异，如发现问题请提 [Issue](https://github.com/Moyuin-aka/EXIF-Catcher/issues)。
 
 ### Q: 没有Rust环境可以使用吗？
-A: 可以！直接下载预编译的二进制文件，无需安装Rust。
+A: 可以！直接从 [Releases](https://github.com/Moyuin-aka/EXIF-Catcher/releases) 下载预编译的二进制文件。
 
 ### Q: 处理速度慢怎么办？
 A: 使用 `--max-width 2048` 参数限制图片宽度，可以提速3-5倍。
