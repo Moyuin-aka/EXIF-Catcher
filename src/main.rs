@@ -45,6 +45,10 @@ struct Cli {
     #[arg(long, default_value = "0")]
     max_width: u32,
     
+    /// 并发处理的线程数（默认为CPU核心数）
+    #[arg(long)]
+    jobs: Option<usize>,
+    
     /// 递归处理子目录
     #[arg(short, long)]
     recursive: bool,
@@ -93,10 +97,27 @@ struct ExifData {
 // 提取EXIF
 fn extract_exif(path: &Path) -> Result<ExifData> {
     let file_data = fs::read(path)?;
-    let cursor = Cursor::new(file_data);
+    let mut cursor = Cursor::new(file_data);
     let exif_reader = exif::Reader::new();
-    let exif = exif_reader.read_from_container(&mut cursor.clone())
-        .context("无法读取EXIF")?;
+    
+    let exif = match exif_reader.read_from_container(&mut cursor) {
+        Ok(v) => v,
+        Err(_) => {
+            // 没有 EXIF 或读取失败（PNG/WebP 常见），返回空值而非错误
+            return Ok(ExifData {
+                make: None,
+                model: None,
+                lens: None,
+                iso: None,
+                shutter_speed: None,
+                aperture: None,
+                focal_length: None,
+                date_time: None,
+                width: None,
+                height: None,
+            });
+        }
+    };
     
     let get_field = |tag: exif::Tag| -> Option<String> {
         if let Some(field) = exif.get_field(tag, exif::In::PRIMARY) {
@@ -177,12 +198,28 @@ fn process_image(
     let original_size = fs::metadata(path)?.len();
     let exif = extract_exif(path)?;
     
-    let (webp_filename, webp_size) = if !skip_webp {
+    // 检查输入格式
+    let is_webp_input = path.extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.eq_ignore_ascii_case("webp"))
+        .unwrap_or(false);
+    
+    let is_heic = path.extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.eq_ignore_ascii_case("heic") || s.eq_ignore_ascii_case("heif"))
+        .unwrap_or(false);
+    
+    // WebP 转换：跳过已是 WebP 的和 HEIC 格式（image crate 可能不支持）
+    let (webp_filename, webp_size) = if !skip_webp && !is_webp_input && !is_heic {
         let stem = path.file_stem().unwrap().to_str().unwrap();
         let webp_name = format!("{}.webp", stem);
         let webp_path = output_img_dir.join(&webp_name);
-        let size = convert_to_webp(path, &webp_path, quality, max_width)?;
-        (Some(webp_name), Some(size))
+        
+        // WebP 转换失败不致命，降级为“无 WebP”
+        match convert_to_webp(path, &webp_path, quality, max_width) {
+            Ok(size) => (Some(webp_name), Some(size)),
+            Err(_) => (None, None), // 转换失败，但仍然输出 EXIF
+        }
     } else {
         (None, None)
     };
@@ -298,7 +335,7 @@ fn process_directory(
     let pb = ProgressBar::new(image_files.len() as u64);
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
             .unwrap()
             .progress_chars("█▓▒░ "),
     );
@@ -327,8 +364,6 @@ fn process_directory(
         let results: Vec<Result<Photo>> = files
             .par_iter()
             .map(|path| {
-                let filename = path.file_name().unwrap().to_string_lossy();
-                pb.set_message(format!("处理: {}", filename));
                 let result = process_image(path, &output_img_dir, skip_webp, quality, max_width);
                 pb.inc(1);
                 result
@@ -346,7 +381,6 @@ fn process_directory(
         all_photos_by_dir.insert(rel_dir.clone(), photos);
     }
     
-    pb.finish_with_message("完成!");
     pb.finish_with_message("完成!");
     
     // 统计总结果
@@ -508,11 +542,21 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     
+    // 设置线程池大小（如果指定）
+    if let Some(n) = cli.jobs {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global()
+            .context("创建线程池失败")?;
+    }
+    
     let (input_dir, output_root, skip_webp, quality, max_width, recursive) = if let Some(input) = cli.input {
         if !input.exists() {
             anyhow::bail!("目录不存在");
         }
-        (input, cli.output, cli.skip_webp, cli.quality, cli.max_width, cli.recursive)
+        // 确保 quality 在有效范围 1-100
+        let quality = cli.quality.clamp(1, 100);
+        (input, cli.output, cli.skip_webp, quality, cli.max_width, cli.recursive)
     } else if cli.yes {
         anyhow::bail!("请指定输入目录");
     } else {
