@@ -70,6 +70,10 @@ cargo build --release
 # 基本使用
 exif-catcher -i /path/to/photos -o dist -q 80
 
+# 当前目录就地输出 + 清理原图（旅行博客工作流）
+# 等价于默认 -i .
+exif-catcher --in-place --cleanup -q 80
+
 # 递归处理所有子目录（保留目录结构）
 exif-catcher -i /path/to/photos -r
 
@@ -84,8 +88,10 @@ exif-catcher --help
 
 | 参数 | 简写 | 说明 | 默认值 |
 |------|------|------|--------|
-| `--input` | `-i` | 输入目录（包含原始图片） | 必需 |
-| `--output` | `-o` | 输出根目录 | `dist` |
+| `--input` | `-i` | 输入目录（包含原始图片） | 命令行模式下为当前目录 `.` |
+| `--output` | `-o` | 输出根目录（`--in-place` 时忽略） | `dist` |
+| `--in-place` | - | 就地输出到输入目录，不嵌套 `output/相册名` | `false` |
+| `--cleanup` | - | 删除已成功转换为 WebP 的原始 `jpg/png/heic` | `false` |
 | `--recursive` | `-r` | 递归处理所有子目录，保留目录结构 | `false` |
 | `--quality` | `-q` | WebP质量 (1-100) | `80` |
 | `--max-width` | - | 限制图片最大宽度（像素），0为不限制 | `0` |
@@ -126,6 +132,21 @@ dist/
     │   └── photo3.webp
     └── exif.json
 ```
+
+### 就地模式（--in-place）
+
+直接写回输入目录，适合博客素材目录原地处理：
+
+```
+旅行目录/
+├── img/
+│   ├── photo1.webp
+│   ├── photo2.webp
+│   └── ...
+└── exif.json
+```
+
+搭配 `--cleanup` 后，会删除已成功转换的原图（`jpg/jpeg/png/heic/heif`）。
 
 ### exif.json 格式
 

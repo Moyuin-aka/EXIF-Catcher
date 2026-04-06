@@ -34,6 +34,14 @@ struct Cli {
     
     #[arg(short, long, value_name = "DIR", default_value = "dist")]
     output: PathBuf,
+
+    /// 就地输出：直接写入输入目录（不再嵌套 output/相册名）
+    #[arg(long)]
+    in_place: bool,
+
+    /// 清理原图：仅删除已成功转换为 WebP 的原始图片
+    #[arg(long)]
+    cleanup: bool,
     
     #[arg(long)]
     skip_webp: bool,
@@ -280,6 +288,53 @@ fn scan_images(dir: &Path, recursive: bool) -> Result<Vec<(PathBuf, String)>> {
     Ok(images)
 }
 
+fn build_output_dir(
+    input_dir: &Path,
+    output_root: &Path,
+    folder_name: &str,
+    rel_dir: &str,
+    in_place: bool,
+) -> PathBuf {
+    if in_place {
+        if rel_dir.is_empty() {
+            input_dir.to_path_buf()
+        } else {
+            input_dir.join(rel_dir)
+        }
+    } else if rel_dir.is_empty() {
+        output_root.join(folder_name)
+    } else {
+        output_root.join(folder_name).join(rel_dir)
+    }
+}
+
+fn should_cleanup_original(path: &Path, photo: &Photo) -> bool {
+    let is_original_image = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "jpg" | "jpeg" | "png" | "heic" | "heif"
+            )
+        })
+        .unwrap_or(false);
+
+    is_original_image && photo.webp.is_some()
+}
+
+fn resolve_folder_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            fs::canonicalize(path)
+                .ok()
+                .and_then(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+        })
+        .unwrap_or_else(|| "album".to_string())
+}
+
 // 批量处理
 fn process_directory(
     input_dir: &Path,
@@ -288,6 +343,8 @@ fn process_directory(
     quality: u8,
     max_width: u32,
     recursive: bool,
+    in_place: bool,
+    cleanup: bool,
 ) -> Result<()> {
     println!("\n{}", "🔍 扫描图片...".cyan().bold());
     if recursive {
@@ -308,14 +365,24 @@ fn process_directory(
         groups.entry(rel_dir.clone()).or_insert_with(Vec::new).push(path.clone());
     }
     
-    let folder_name = input_dir.file_name().unwrap().to_str().unwrap();
-    
-    if recursive && groups.len() > 1 {
+    let folder_name = resolve_folder_name(input_dir);
+
+    if in_place {
+        println!("📁 输出结构:");
+        if recursive && groups.len() > 1 {
+            println!("  {}", input_dir.display().to_string().cyan());
+            println!("  └── 每个目录下将生成 img/ 与 exif.json\n");
+        } else {
+            println!("  {}", input_dir.display().to_string().cyan());
+            println!("  ├── img/");
+            println!("  └── exif.json\n");
+        }
+    } else if recursive && groups.len() > 1 {
         println!("📁 目录结构:");
         println!("  {}/ (输出根目录)", output_root.display());
         for rel_dir in groups.keys() {
             let display_dir = if rel_dir.is_empty() {
-                folder_name.to_string()
+                folder_name.clone()
             } else {
                 format!("{}/{}", folder_name, rel_dir)
             };
@@ -325,7 +392,7 @@ fn process_directory(
         }
         println!();
     } else {
-        let output_dir = output_root.join(folder_name);
+        let output_dir = output_root.join(&folder_name);
         println!("📁 输出结构:");
         println!("  {}", output_dir.display().to_string().cyan());
         println!("  ├── img/");
@@ -351,13 +418,10 @@ fn process_directory(
     // 按目录分组处理
     let mut all_photos_by_dir: std::collections::HashMap<String, Vec<Photo>> = std::collections::HashMap::new();
     let mut total_errors = Vec::new();
+    let mut cleanup_candidates = Vec::new();
     
     for (rel_dir, files) in groups {
-        let output_dir = if rel_dir.is_empty() {
-            output_root.join(folder_name)
-        } else {
-            output_root.join(folder_name).join(&rel_dir)
-        };
+        let output_dir = build_output_dir(input_dir, output_root, &folder_name, &rel_dir, in_place);
         let output_img_dir = output_dir.join("img");
         fs::create_dir_all(&output_img_dir)?;
         
@@ -373,7 +437,12 @@ fn process_directory(
         let mut photos = Vec::new();
         for (i, result) in results.into_iter().enumerate() {
             match result {
-                Ok(photo) => photos.push(photo),
+                Ok(photo) => {
+                    if cleanup && should_cleanup_original(&files[i], &photo) {
+                        cleanup_candidates.push(files[i].clone());
+                    }
+                    photos.push(photo)
+                }
                 Err(e) => total_errors.push((files[i].clone(), e)),
             }
         }
@@ -418,11 +487,7 @@ fn process_directory(
                 continue;
             }
             
-            let output_dir = if rel_dir.is_empty() {
-                output_root.join(folder_name)
-            } else {
-                output_root.join(folder_name).join(&rel_dir)
-            };
+            let output_dir = build_output_dir(input_dir, output_root, &folder_name, &rel_dir, in_place);
             let output_json = output_dir.join("exif.json");
             let output_img_dir = output_dir.join("img");
             
@@ -434,14 +499,45 @@ fn process_directory(
                 println!("🖼️  图片: {}", output_img_dir.display().to_string().cyan());
             }
         }
-        println!("\n{}", "💡 提示: 现在可以用 Rclone 上传 dist/ 文件夹了!".bright_black());
+
+        if cleanup {
+            cleanup_candidates.sort();
+            cleanup_candidates.dedup();
+
+            let mut deleted = 0usize;
+            let mut cleanup_errors = Vec::new();
+            for path in cleanup_candidates {
+                match fs::remove_file(&path) {
+                    Ok(_) => deleted += 1,
+                    Err(e) => cleanup_errors.push((path, e)),
+                }
+            }
+
+            println!("\n{}", "🧹 清理结果:".bold());
+            println!("  🗑️  删除原图: {}", deleted.to_string().green().bold());
+            if !cleanup_errors.is_empty() {
+                println!("  ❌ 删除失败: {}", cleanup_errors.len().to_string().red().bold());
+                for (path, e) in cleanup_errors.iter().take(3) {
+                    eprintln!("     - {}: {}", path.display(), e);
+                }
+                if cleanup_errors.len() > 3 {
+                    eprintln!("     ... 还有 {} 个错误", cleanup_errors.len() - 3);
+                }
+            }
+        }
+
+        if in_place {
+            println!("\n{}", "💡 提示: 现在可以上传当前目录下的 img/ 与 exif.json 了!".bright_black());
+        } else {
+            println!("\n{}", "💡 提示: 现在可以用 Rclone 上传 dist/ 文件夹了!".bright_black());
+        }
     }
     
     Ok(())
 }
 
 // 交互模式
-fn interactive_mode() -> Result<(PathBuf, PathBuf, bool, u8, u32, bool)> {
+fn interactive_mode() -> Result<(PathBuf, PathBuf, bool, u8, u32, bool, bool, bool)> {
     println!("{}", "
 ======================================
   📸 EXIF Catcher
@@ -466,6 +562,11 @@ fn interactive_mode() -> Result<(PathBuf, PathBuf, bool, u8, u32, bool)> {
     
     let recursive = Confirm::new()
         .with_prompt("📂 递归处理子目录?")
+        .default(false)
+        .interact()?;
+
+    let in_place = Confirm::new()
+        .with_prompt("📍 就地输出（写回输入目录）?")
         .default(false)
         .interact()?;
     
@@ -499,12 +600,26 @@ fn interactive_mode() -> Result<(PathBuf, PathBuf, bool, u8, u32, bool)> {
     } else {
         (80, 0)
     };
+
+    let cleanup = if !skip_webp {
+        Confirm::new()
+            .with_prompt("🧹 转换成功后删除原图?")
+            .default(false)
+            .interact()?
+    } else {
+        false
+    };
     
-    let folder_name = input_path.file_name().unwrap().to_str().unwrap();
+    let folder_name = resolve_folder_name(&input_path);
     println!("\n{}", "📋 配置:".bold());
     println!("  输入: {}", input_path.display().to_string().green());
-    println!("  输出: {}/{}", output_path.display().to_string().green(), folder_name);
+    if in_place {
+        println!("  输出: {}", "输入目录（就地）".green());
+    } else {
+        println!("  输出: {}/{}", output_path.display().to_string().green(), folder_name);
+    }
     println!("  递归: {}", if recursive { "是".green() } else { "否".bright_black() });
+    println!("  清理原图: {}", if cleanup { "是".yellow() } else { "否".bright_black() });
     if !skip_webp {
         println!("  WebP: 是 (质量: {})", quality);
     }
@@ -513,7 +628,7 @@ fn interactive_mode() -> Result<(PathBuf, PathBuf, bool, u8, u32, bool)> {
         anyhow::bail!("取消");
     }
     
-    Ok((input_path, output_path, skip_webp, quality, max_width, recursive))
+    Ok((input_path, output_path, skip_webp, quality, max_width, recursive, in_place, cleanup))
 }
 
 // 主程序
@@ -541,6 +656,7 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    let has_any_cli_args = std::env::args_os().len() > 1;
     
     // 设置线程池大小（如果指定）
     if let Some(n) = cli.jobs {
@@ -550,19 +666,38 @@ fn run() -> Result<()> {
             .context("创建线程池失败")?;
     }
     
-    let (input_dir, output_root, skip_webp, quality, max_width, recursive) = if let Some(input) = cli.input {
+    let (input_dir, output_root, skip_webp, quality, max_width, recursive, in_place, cleanup) = if let Some(input) = cli.input {
         if !input.exists() {
             anyhow::bail!("目录不存在");
         }
         // 确保 quality 在有效范围 1-100
         let quality = cli.quality.clamp(1, 100);
-        (input, cli.output, cli.skip_webp, quality, cli.max_width, cli.recursive)
-    } else if cli.yes {
-        anyhow::bail!("请指定输入目录");
+        (input, cli.output, cli.skip_webp, quality, cli.max_width, cli.recursive, cli.in_place, cli.cleanup)
+    } else if has_any_cli_args || cli.yes {
+        let input = PathBuf::from(".");
+        if !input.exists() {
+            anyhow::bail!("当前目录不存在");
+        }
+        // 命令行模式且未显式指定 -i 时，默认读取当前目录
+        let quality = cli.quality.clamp(1, 100);
+        (input, cli.output, cli.skip_webp, quality, cli.max_width, cli.recursive, cli.in_place, cli.cleanup)
     } else {
         interactive_mode()?
     };
+
+    if cleanup && skip_webp {
+        println!("{}", "⚠️  当前启用了 --skip-webp，--cleanup 不会删除任何文件。".yellow());
+    }
     
-    process_directory(&input_dir, &output_root, skip_webp, quality, max_width, recursive)?;
+    process_directory(
+        &input_dir,
+        &output_root,
+        skip_webp,
+        quality,
+        max_width,
+        recursive,
+        in_place,
+        cleanup,
+    )?;
     Ok(())
 }
