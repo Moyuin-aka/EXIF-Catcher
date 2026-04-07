@@ -1,0 +1,293 @@
+{
+  "default": {
+    "lenses": {
+      "1": {
+        "name": "主摄（23mm，可变光圈）",
+        "focal_hint": "8.72 mm (eq 23 mm)"
+      },
+      "5": {
+        "name": "主摄 2x（46mm）",
+        "focal_hint": "8.72 mm (eq 46 mm)"
+      },
+      "9": {
+        "name": "主摄（23mm）",
+        "focal_hint": "8.72 mm (eq 23 mm)"
+      }
+    },
+    "focal_map": {
+      "2.0": {
+        "name": "后置超广角",
+        "focal_hint": "2.0 mm"
+      },
+      "8.7": {
+        "name": "后置主摄",
+        "focal_hint": "8.7 mm"
+      },
+      "8.72": {
+        "name": "后置主摄",
+        "focal_hint": "8.72 mm"
+      },
+      "12.3": {
+        "name": "后置长焦",
+        "focal_hint": "12.3 mm"
+      },
+      "19.4": {
+        "name": "后置超长焦",
+        "focal_hint": "19.4 mm"
+      }
+    }
+  },
+  "24031PN0DC": {
+    "model_name": "Xiaomi 14 Ultra",
+    "lenses": {
+      "1": {
+        "name": "主摄（23mm，可变光圈）",
+        "focal_hint": "8.72 mm (eq 23 mm)"
+      },
+      "5": {
+        "name": "主摄 2x（46mm）",
+        "focal_hint": "8.72 mm (eq 46 mm)"
+      },
+      "9": {
+        "name": "主摄（23mm）",
+        "focal_hint": "8.72 mm (eq 23 mm)"
+      }
+    },
+    "focal_map": {
+      "2.0": {
+        "name": "后置超广角",
+        "focal_hint": "2.0 mm (eq 12 mm)"
+      },
+      "8.7": {
+        "name": "后置主摄",
+        "focal_hint": "8.7 mm (eq 24 mm)"
+      },
+      "12.3": {
+        "name": "后置长焦",
+        "focal_hint": "12.3 mm (eq 75 mm)"
+      },
+      "19.4": {
+        "name": "后置超长焦",
+        "focal_hint": "19.4 mm (eq 120 mm)"
+      }
+    }
+  },
+  "Xiaomi 15 Ultra": {
+    "model_name": "Xiaomi 15 Ultra",
+    "lenses": {},
+    "focal_map": {
+      "2.13": {
+        "name": "后置超广角",
+        "focal_hint": "2.13 mm"
+      },
+      "8.72": {
+        "name": "后置主摄",
+        "focal_hint": "8.72 mm"
+      },
+      "11.5": {
+        "name": "后置长焦",
+        "focal_hint": "11.5 mm"
+      },
+      "25.1": {
+        "name": "后置超长焦",
+        "focal_hint": "25.1 mm"
+      }
+    }
+  },
+  "2304FPN6DC": {
+    "model_name": "Xiaomi 13 Ultra",
+    "lenses": {},
+    "focal_map": {
+      "2.83": {
+        "name": "前置超广角",
+        "focal_hint": "2.83 mm"
+      },
+      "2.0": {
+        "name": "后置超广角",
+        "focal_hint": "2.0 mm"
+      },
+      "2.03": {
+        "name": "后置超广角",
+        "focal_hint": "2.03 mm"
+      },
+      "8.7": {
+        "name": "后置主摄",
+        "focal_hint": "8.7 mm"
+      },
+      "9.87": {
+        "name": "后置长焦",
+        "focal_hint": "9.87 mm"
+      },
+      "9.9": {
+        "name": "后置长焦",
+        "focal_hint": "9.9 mm"
+      },
+      "19.4": {
+        "name": "后置超长焦",
+        "focal_hint": "19.4 mm"
+      }
+    }
+  },
+  "23127PN0CC": {
+    "model_name": "Xiaomi 14",
+    "lenses": {},
+    "focal_map": {
+      "2.2": {
+        "name": "后置超广角",
+        "focal_hint": "2.2 mm"
+      },
+      "6.5": {
+        "name": "后置主摄",
+        "focal_hint": "6.5 mm"
+      },
+      "9.0": {
+        "name": "后置长焦",
+        "focal_hint": "9.0 mm"
+      }
+    }
+  },
+  "23116PN5BC": {
+    "model_name": "Xiaomi 14 Pro",
+    "lenses": {},
+    "focal_map": {
+      "2.2": {
+        "name": "后置超广角",
+        "focal_hint": "2.2 mm"
+      },
+      "6.7": {
+        "name": "后置主摄",
+        "focal_hint": "6.7 mm"
+      },
+      "10.1": {
+        "name": "后置长焦",
+        "focal_hint": "10.1 mm"
+      }
+    }
+  },
+  "24053PY09C": {
+    "model_name": "Xiaomi Civi 4 Pro",
+    "lenses": {},
+    "focal_map": {
+      "1.9": {
+        "name": "后置超广角",
+        "focal_hint": "1.9 mm"
+      },
+      "5.84": {
+        "name": "后置主摄",
+        "focal_hint": "5.84 mm"
+      },
+      "7.1": {
+        "name": "后置长焦",
+        "focal_hint": "7.1 mm"
+      }
+    }
+  },
+  "2308CPXD0C": {
+    "model_name": "Xiaomi Mix Fold 3",
+    "lenses": {},
+    "focal_map": {
+      "1.906": {
+        "name": "后置超广角",
+        "focal_hint": "1.906 mm"
+      },
+      "5.35": {
+        "name": "后置主摄",
+        "focal_hint": "5.35 mm"
+      },
+      "7.06": {
+        "name": "后置长焦",
+        "focal_hint": "7.06 mm"
+      },
+      "12.12": {
+        "name": "后置超长焦",
+        "focal_hint": "12.12 mm"
+      }
+    }
+  },
+  "2405CPX3DC": {
+    "model_name": "Xiaomi Mix Flip",
+    "lenses": {},
+    "focal_map": {
+      "5.35": {
+        "name": "后置主摄",
+        "focal_hint": "5.35 mm"
+      },
+      "6.08": {
+        "name": "后置标准镜头",
+        "focal_hint": "6.08 mm"
+      }
+    }
+  },
+  "Xiaomi MIX Fold 4": {
+    "model_name": "Xiaomi MIX Fold 4",
+    "lenses": {},
+    "focal_map": {
+      "1.906": {
+        "name": "后置超广角",
+        "focal_hint": "1.906 mm"
+      },
+      "5.35": {
+        "name": "后置主摄",
+        "focal_hint": "5.35 mm"
+      },
+      "6.8": {
+        "name": "后置标准镜头",
+        "focal_hint": "6.8 mm"
+      },
+      "12.12": {
+        "name": "后置超长焦",
+        "focal_hint": "12.12 mm"
+      }
+    }
+  },
+  "Redmi K70 Ultra": {
+    "model_name": "Redmi K70 Ultra",
+    "lenses": {},
+    "focal_map": {
+      "1.65": {
+        "name": "后置超广角",
+        "focal_hint": "1.65 mm"
+      },
+      "5.84": {
+        "name": "后置主摄",
+        "focal_hint": "5.84 mm"
+      }
+    }
+  },
+  "Xiaomi 15": {
+    "model_name": "Xiaomi 15",
+    "lenses": {},
+    "focal_map": {
+      "2.16": {
+        "name": "后置超广角",
+        "focal_hint": "2.16 mm"
+      },
+      "6.55": {
+        "name": "后置主摄",
+        "focal_hint": "6.55 mm"
+      },
+      "9": {
+        "name": "后置长焦",
+        "focal_hint": "9 mm"
+      }
+    }
+  },
+  "Xiaomi 15 Pro": {
+    "model_name": "Xiaomi 15 Pro",
+    "lenses": {},
+    "focal_map": {
+      "2.16": {
+        "name": "后置超广角",
+        "focal_hint": "2.16 mm"
+      },
+      "6.68": {
+        "name": "后置主摄",
+        "focal_hint": "6.68 mm"
+      },
+      "19.4": {
+        "name": "后置超长焦",
+        "focal_hint": "19.4 mm"
+      }
+    }
+  }
+}
